@@ -1,5 +1,6 @@
 """Fixed-period public contribution ranking, using only Python's standard library."""
 import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 from pathlib import Path
@@ -117,9 +118,11 @@ def main():
                 users[user['login'].lower()] = user
         print(f'Contributions fetched: {len(users)}/{len(logins)}', flush=True)
 
-    for start in range(0, len(logins), 20):
-        fetch_batch(logins[start:start + 20])
-        time.sleep(1)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(fetch_batch, logins[start:start + 20])
+                   for start in range(0, len(logins), 20)]
+        for future in as_completed(futures):
+            future.result()
     target = users.get('physshell')
     if not target:
         raise RuntimeError('PhysShell missing')
