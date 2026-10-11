@@ -1,20 +1,34 @@
-name: Top GitHub Users
+name: Kazakhstan fixed-period ranking
 on:
-  schedule:
-    - cron: '* */24 * * *'
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   release:
-    name: GitHub Active Users
+    name: Kazakhstan fixed-period ranking
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v2.3.4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          ref: ${{ github.head_ref }}
-          token: ${{ secrets.CUSTOM_TOKEN }}
-      - uses: actions/setup-node@v2.1.5
-        with:
-          node-version: 14.17.0
-      - uses: gayanvoice/top-github-users-action@3.0.0
+          python-version: '3.12'
+      - name: Recalculate
         env:
-          CUSTOM_TOKEN: ${{ secrets.CUSTOM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/kazakhstan_ranking.py
+      - name: Save results
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cache/kazakhstan-fixed-period.json markdown/public_contributions/kazakhstan.md
+          if ! git diff --cached --quiet; then
+            git commit -m 'Recalculate Kazakhstan for fixed period'
+            git push origin HEAD:main
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kazakhstan-fixed-period
+          path: |
+            cache/kazakhstan-fixed-period.json
+            markdown/public_contributions/kazakhstan.md
