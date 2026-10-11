@@ -44,10 +44,10 @@ def main():
     country = json.loads(Path('config.json').read_text())['locations'][0]
     base = ' '.join('location:' + place.replace(' ', '_').lower()
                     for place in [country['country'], *country['cities']])
-    query = '''query($q: String!, $cursor: String, $from: DateTime!, $to: DateTime!) {
-      search(type: USER, query: $q, first: 50, after: $cursor) {
+    query = '''query($q: String!, $cursor: String) {
+      search(type: USER, query: $q, first: 100, after: $cursor) {
         userCount pageInfo { hasNextPage endCursor }
-        nodes { ... on User { ''' + FIELDS + ''' } }
+        nodes { ... on User { login location followers { totalCount } } }
       }
     }'''
     period = {'from': FROM, 'to': TO}
@@ -59,7 +59,7 @@ def main():
             q += f' created:{created_start.isoformat()}..{created_end.isoformat()}'
         cursor, first = None, True
         while True:
-            data = api(query, {**period, 'q': q, 'cursor': cursor})['search']
+            data = api(query, {'q': q, 'cursor': cursor})['search']
             if first and data['userCount'] > 1000:
                 if low != high:
                     middle = (low + high) // 2
@@ -95,11 +95,34 @@ def main():
         raise RuntimeError('Empty country search')
     collect(0, maximum[0]['followers']['totalCount'])
     found = 'physshell' in users
-    target = api('query($from: DateTime!, $to: DateTime!) { user(login: "PhysShell") { '
-                 + FIELDS + ' } }', period)['user']
+    logins = [user['login'] for user in users.values()]
+    if not found:
+        logins.append('PhysShell')
+    users = {}
+
+    def fetch_batch(batch):
+        fields = '\n'.join(f'u{i}: user(login: {json.dumps(login)}) {{ {FIELDS} }}'
+                           for i, login in enumerate(batch))
+        try:
+            data = api('query($from: DateTime!, $to: DateTime!) { ' + fields + ' }', period)
+        except RuntimeError as error:
+            if 'RESOURCE_LIMITS_EXCEEDED' not in str(error) or len(batch) == 1:
+                raise
+            middle = len(batch) // 2
+            fetch_batch(batch[:middle])
+            fetch_batch(batch[middle:])
+            return
+        for user in data.values():
+            if user:
+                users[user['login'].lower()] = user
+        print(f'Contributions fetched: {len(users)}/{len(logins)}', flush=True)
+
+    for start in range(0, len(logins), 20):
+        fetch_batch(logins[start:start + 20])
+        time.sleep(1)
+    target = users.get('physshell')
     if not target:
         raise RuntimeError('PhysShell missing')
-    users['physshell'] = target
     for user in users.values():
         c = user.pop('contributionsCollection')
         user['followers'] = user['followers']['totalCount']
