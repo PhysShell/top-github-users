@@ -15,7 +15,7 @@ jobs:
           python-version: '3.12'
       - name: Recalculate
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CUSTOM_TOKEN || github.token }}
         run: python scripts/kazakhstan_ranking.py
       - name: Save results
         run: |
