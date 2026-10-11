@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import time
+import urllib.error
 import urllib.request
 
 FROM = '2025-09-17T03:11:00Z'
@@ -20,11 +21,23 @@ def api(query, variables):
         json.dumps({'query': query, 'variables': variables}).encode(),
         {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
          'Content-Type': 'application/json', 'User-Agent': 'kazakhstan-ranking'})
-    with urllib.request.urlopen(request, timeout=90) as response:
-        result = json.load(response)
-    if result.get('errors'):
-        raise RuntimeError(json.dumps(result['errors']))
-    return result['data']
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                result = json.load(response)
+            if result.get('errors'):
+                message = json.dumps(result['errors'])
+                if 'timeout' in message.lower() or 'something went wrong' in message.lower():
+                    raise TimeoutError(message)
+                raise RuntimeError(message)
+            return result['data']
+        except urllib.error.HTTPError as error:
+            if error.code not in (429, 500, 502, 503, 504) or attempt == 4:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 4:
+                raise
+        time.sleep(3 * (attempt + 1))
 
 
 def main():
@@ -32,7 +45,7 @@ def main():
     base = ' '.join('location:' + place.replace(' ', '_').lower()
                     for place in [country['country'], *country['cities']])
     query = '''query($q: String!, $cursor: String, $from: DateTime!, $to: DateTime!) {
-      search(type: USER, query: $q, first: 25, after: $cursor) {
+      search(type: USER, query: $q, first: 50, after: $cursor) {
         userCount pageInfo { hasNextPage endCursor }
         nodes { ... on User { ''' + FIELDS + ''' } }
       }
@@ -40,17 +53,26 @@ def main():
     period = {'from': FROM, 'to': TO}
     users, partitions = {}, []
 
-    def collect(low, high):
+    def collect(low, high, created_start=None, created_end=None):
         q = f'{base} followers:{low}..{high} sort:followers-desc'
+        if created_start is not None:
+            q += f' created:{created_start.isoformat()}..{created_end.isoformat()}'
         cursor, first = None, True
         while True:
             data = api(query, {**period, 'q': q, 'cursor': cursor})['search']
             if first and data['userCount'] > 1000:
-                if low == high:
-                    raise RuntimeError(f'Search limit exceeded at {low} followers')
-                middle = (low + high) // 2
-                collect(low, middle)
-                collect(middle + 1, high)
+                if low != high:
+                    middle = (low + high) // 2
+                    collect(low, middle)
+                    collect(middle + 1, high)
+                else:
+                    start = created_start or datetime.date(2008, 1, 1)
+                    end = created_end or datetime.datetime.now(datetime.timezone.utc).date()
+                    if start == end:
+                        raise RuntimeError(f'Search limit exceeded at {low} followers on {start}')
+                    middle = start + (end - start) // 2
+                    collect(low, high, start, middle)
+                    collect(low, high, middle + datetime.timedelta(days=1), end)
                 return
             if first:
                 partitions.append({'query': q, 'userCount': data['userCount']})
@@ -95,7 +117,7 @@ def main():
         f'Period: `{FROM}` → `{TO}`.', f'Generated: `{metadata["generatedAt"]}`.',
         f'PhysShell: **{target["publicContributions"]} contributions; rank #{rank}**.',
         f'Found by location search: **{found}**. Accounts fetched: **{len(ranking)}**.', '',
-        'Equal contribution counts share a rank. Search is partitioned by follower count to avoid the 1,000-result cap.',
+        'Equal contribution counts share a rank. Search is partitioned by followers and account creation date to avoid the 1,000-result cap.',
         'Coverage includes GitHub location search results, not every developer in Kazakhstan.',
         'Profile locations and follower counts are current; contribution dates are fixed.', '',
         '| Rank | User | Public contributions | Followers |', '| --- | --- | --- | --- |']
