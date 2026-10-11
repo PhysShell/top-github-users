@@ -8,7 +8,7 @@ This fork recalculates Kazakhstan for **2025-09-17 03:11 UTC through 2026-09-17 
 
 The workflow uses the repository secret `CUSTOM_TOKEN` for API reads, falling back to the built-in GitHub Actions token if the secret is absent. The built-in token is used for committing results. No token is stored in source files. It writes updated results to `main` and uploads a result artifact. Scheduled runs are disabled because the contribution period is fixed.
 
-The script preserves the upstream Kazakhstan/city location query, partitions searches by followers and account creation dates to avoid the 1,000-result search cap, and calculates `totalContributions - restrictedContributionsCount` for every returned user. PhysShell is included explicitly if location search does not return it; this is recorded in the JSON. Equal contribution counts share the same rank.
+By default the script preserves the upstream Kazakhstan/city location query and the first 1,000 search results sorted by followers. The optional `full_coverage` workflow input expands searches by followers and account creation dates; this mode is slow. The script calculates `totalContributions - restrictedContributionsCount` for every returned user. PhysShell is included explicitly if location search does not return it; this is recorded in the JSON. Equal contribution counts share the same rank.
 
 Locations and follower counts reflect the time of collection, not historical profile settings. Search coverage depends on GitHub location search, and is not a census of all developers in Kazakhstan. A failed run does not publish partial results. Other country files inherited from upstream are not recalculated by this fork.
 

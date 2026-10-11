@@ -1,6 +1,11 @@
 name: Kazakhstan fixed-period ranking
 on:
   workflow_dispatch:
+    inputs:
+      full_coverage:
+        description: 'Expand beyond the upstream 1,000 search-result selection (slow)'
+        type: boolean
+        default: false
 permissions:
   contents: write
 jobs:
@@ -16,6 +21,7 @@ jobs:
       - name: Recalculate
         env:
           GH_TOKEN: ${{ secrets.CUSTOM_TOKEN || github.token }}
+          FULL_COVERAGE: ${{ inputs.full_coverage }}
         run: python scripts/kazakhstan_ranking.py
       - name: Save results
         run: |

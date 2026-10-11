@@ -3,6 +3,7 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
+import threading
 from pathlib import Path
 import time
 import urllib.error
@@ -15,14 +16,20 @@ contributionsCollection(from: $from, to: $to) {
   contributionCalendar { totalContributions }
   restrictedContributionsCount
 }'''
+REQUEST_LOCK = threading.Lock()
+NEXT_REQUEST_AT = 0.0
 
 
 def api(query, variables):
+    global NEXT_REQUEST_AT
     request = urllib.request.Request('https://api.github.com/graphql',
         json.dumps({'query': query, 'variables': variables}).encode(),
         {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
          'Content-Type': 'application/json', 'User-Agent': 'kazakhstan-ranking'})
     for attempt in range(5):
+        with REQUEST_LOCK:
+            time.sleep(max(0, NEXT_REQUEST_AT - time.monotonic()))
+            NEXT_REQUEST_AT = time.monotonic() + 3
         try:
             with urllib.request.urlopen(request, timeout=90) as response:
                 result = json.load(response)
@@ -33,6 +40,17 @@ def api(query, variables):
                 raise RuntimeError(message)
             return result['data']
         except urllib.error.HTTPError as error:
+            if error.code in (403, 429):
+                body = error.read().decode('utf-8', errors='replace')
+                if error.code == 403 and not any(term in body.lower() for term in ('rate limit', 'abuse', 'temporarily')):
+                    raise RuntimeError(f'GitHub HTTP 403: {body}') from error
+                delay = max(60 * (attempt + 1), int(error.headers.get('Retry-After', '0')))
+                with REQUEST_LOCK:
+                    NEXT_REQUEST_AT = max(NEXT_REQUEST_AT, time.monotonic() + delay)
+                print(f'GitHub temporary request limit; pausing {delay}s', flush=True)
+                if attempt == 4:
+                    raise RuntimeError(f'GitHub request limit persists: {body}') from error
+                continue
             if error.code not in (429, 500, 502, 503, 504) or attempt == 4:
                 raise
         except (urllib.error.URLError, TimeoutError):
@@ -94,7 +112,23 @@ def main():
     }''', {'q': base + ' sort:followers-desc'})['search']['nodes']
     if not maximum:
         raise RuntimeError('Empty country search')
-    collect(0, maximum[0]['followers']['totalCount'])
+    full_coverage = os.environ.get('FULL_COVERAGE', 'false').lower() == 'true'
+    if full_coverage:
+        collect(0, maximum[0]['followers']['totalCount'])
+    else:
+        cursor = None
+        for page in range(10):
+            q = base + ' sort:followers-desc'
+            data = api(query, {'q': q, 'cursor': cursor})['search']
+            if page == 0:
+                partitions.append({'query': q, 'userCount': data['userCount'], 'resultLimit': 1000})
+            for user in data['nodes']:
+                if user.get('login'):
+                    users[user['login'].lower()] = user
+            print(f'Fetched {len(users)} users (upstream selection)', flush=True)
+            if not data['pageInfo']['hasNextPage']:
+                break
+            cursor = data['pageInfo']['endCursor']
     found = 'physshell' in users
     logins = [user['login'] for user in users.values()]
     if not found:
@@ -118,7 +152,7 @@ def main():
                 users[user['login'].lower()] = user
         print(f'Contributions fetched: {len(users)}/{len(logins)}', flush=True)
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(fetch_batch, logins[start:start + 20])
                    for start in range(0, len(logins), 20)]
         for future in as_completed(futures):
@@ -135,6 +169,7 @@ def main():
     ranking = sorted(users.values(), key=lambda u: (-u['publicContributions'], -u['followers'], u['login'].lower()))
     rank = 1 + sum(u['publicContributions'] > target['publicContributions'] for u in ranking)
     metadata = {**period, 'generatedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                'selectionMode': 'full-location-search' if full_coverage else 'upstream-top-1000-search-results',
                 'targetFoundInLocationSearch': found, 'targetRank': rank,
                 'searchPartitions': partitions, 'users': ranking}
     Path('cache').mkdir(exist_ok=True)
@@ -143,6 +178,7 @@ def main():
         f'Period: `{FROM}` → `{TO}`.', f'Generated: `{metadata["generatedAt"]}`.',
         f'PhysShell: **{target["publicContributions"]} contributions; rank #{rank}**.',
         f'Found by location search: **{found}**. Accounts fetched: **{len(ranking)}**.', '',
+        f'Selection mode: `{metadata["selectionMode"]}`.', '',
         'Equal contribution counts share a rank. Search is partitioned by followers and account creation date to avoid the 1,000-result cap.',
         'Coverage includes GitHub location search results, not every developer in Kazakhstan.',
         'Profile locations and follower counts are current; contribution dates are fixed.', '',
