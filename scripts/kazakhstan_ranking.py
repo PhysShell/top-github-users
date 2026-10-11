@@ -179,7 +179,9 @@ def main():
         f'PhysShell: **{target["publicContributions"]} contributions; rank #{rank}**.',
         f'Found by location search: **{found}**. Accounts fetched: **{len(ranking)}**.', '',
         f'Selection mode: `{metadata["selectionMode"]}`.', '',
-        'Equal contribution counts share a rank. Search is partitioned by followers and account creation date to avoid the 1,000-result cap.',
+        'Equal contribution counts share a rank.',
+        ('Search is partitioned by followers and account creation date to avoid the 1,000-result cap.'
+         if full_coverage else 'Uses the upstream first 1,000 search results, sorted by followers.'),
         'Coverage includes GitHub location search results, not every developer in Kazakhstan.',
         'Profile locations and follower counts are current; contribution dates are fixed.', '',
         '| Rank | User | Public contributions | Followers |', '| --- | --- | --- | --- |']

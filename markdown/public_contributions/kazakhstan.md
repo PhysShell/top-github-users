@@ -7,7 +7,8 @@ Found by location search: **True**. Accounts fetched: **968**.
 
 Selection mode: `upstream-top-1000-search-results`.
 
-Equal contribution counts share a rank. Search is partitioned by followers and account creation date to avoid the 1,000-result cap.
+Equal contribution counts share a rank.
+Uses the upstream first 1,000 search results, sorted by followers.
 Coverage includes GitHub location search results, not every developer in Kazakhstan.
 Profile locations and follower counts are current; contribution dates are fixed.
 
